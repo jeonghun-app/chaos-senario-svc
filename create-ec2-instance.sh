@@ -13,7 +13,7 @@ VPC_ID="vpc-00c2db4c26324e6f8"
 SUBNET_ID="subnet-0965c00cce99ea63c"
 SECURITY_GROUP_ID="sg-0d8ba709de8330b24"
 IAM_INSTANCE_PROFILE="arn:aws:iam::081041735764:instance-profile/EC2Sec"
-INSTANCE_TYPE="t3.medium"
+INSTANCE_TYPE="c5.xlarge"
 STORAGE_SIZE="100"
 AMI_ID="ami-0340d40dae6a2cbcf"  # Amazon Linux 2023
 
@@ -51,7 +51,7 @@ echo "EC2 인스턴스 생성 중..."
 INSTANCE_ID=$(aws ec2 run-instances \
     --region us-east-1 \
     --image-id ami-0340d40dae6a2cbcf \
-    --instance-type t3.medium \
+    --instance-type c5.xlarge \
     --subnet-id subnet-0965c00cce99ea63c \
     --security-group-ids sg-0d8ba709de8330b24 \
     --iam-instance-profile Arn=arn:aws:iam::081041735764:instance-profile/EC2Sec \

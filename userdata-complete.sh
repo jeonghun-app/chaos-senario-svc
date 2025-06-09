@@ -162,30 +162,72 @@ if [ -d "bank-demo-web" ]; then
         }
         
         echo "Building Next.js application..."
-        # Set Node.js memory limit and build with retry logic
-        export NODE_OPTIONS="--max-old-space-size=2048"
         
-        # First attempt with full build
-        if sudo -u ec2-user NODE_OPTIONS="--max-old-space-size=2048" timeout 600 npm run build; then
-            echo "✅ Next.js build completed successfully"
+        # 메모리 사용량 모니터링 함수
+        monitor_build() {
+            local pid=$1
+            while kill -0 $pid 2>/dev/null; do
+                echo "Build progress... Memory: $(free -h | grep Mem | awk '{print $3"/"$2}')"
+                sleep 30
+            done
+        }
+        
+        # 1차 시도: 가장 가벼운 설정으로 빠른 빌드
+        echo "🚀 Attempting lightweight build (3 minutes timeout)..."
+        if timeout 180 sudo -u ec2-user bash -c "
+            export NODE_OPTIONS='--max-old-space-size=512'
+            export NEXT_TELEMETRY_DISABLED=1
+            export NODE_ENV=production
+            npm run build
+        " & monitor_build $!; then
+            echo "✅ Lightweight build completed successfully"
         else
-            echo "⚠️  First build attempt failed, trying with reduced memory settings..."
+            echo "⚠️  Lightweight build failed, trying standard build..."
             
-            # Second attempt with minimal memory settings
-            if sudo -u ec2-user NODE_OPTIONS="--max-old-space-size=1024" timeout 900 npm run build; then
-                echo "✅ Next.js build completed with reduced memory"
+            # 2차 시도: 표준 설정
+            echo "🔄 Attempting standard build (5 minutes timeout)..."
+            if timeout 300 sudo -u ec2-user bash -c "
+                export NODE_OPTIONS='--max-old-space-size=1024'
+                export NEXT_TELEMETRY_DISABLED=1
+                npm run build
+            " & monitor_build $!; then
+                echo "✅ Standard build completed successfully"
             else
-                echo "⚠️  Build failed, attempting without optimization..."
+                echo "⚠️  Standard build failed, trying development mode build..."
                 
-                # Third attempt without optimization
-                if sudo -u ec2-user NODE_OPTIONS="--max-old-space-size=512" NEXT_TELEMETRY_DISABLED=1 timeout 1200 npm run build; then
-                    echo "✅ Next.js build completed without optimization"
+                # 3차 시도: 개발 모드 빌드
+                echo "🛠️  Attempting development build..."
+                if timeout 120 sudo -u ec2-user bash -c "
+                    export NODE_OPTIONS='--max-old-space-size=512'
+                    export NEXT_TELEMETRY_DISABLED=1
+                    export NODE_ENV=development
+                    npm run build
+                " & monitor_build $!; then
+                    echo "✅ Development build completed"
                 else
-                    echo "❌ All build attempts failed. Creating minimal production setup..."
-                    # Create a minimal package to continue
-                    sudo -u ec2-user mkdir -p .next/static
-                    sudo -u ec2-user echo '{"version":"1.0.0"}' > .next/BUILD_ID
-                    echo "⚠️  Using fallback build, application may have limited functionality"
+                    echo "❌ All build attempts failed. Using production fallback..."
+                    
+                    # 폴백: 수동으로 필요한 구조 생성
+                    echo "Creating minimal Next.js production structure..."
+                    sudo -u ec2-user mkdir -p .next/static .next/server/pages .next/server/chunks
+                    sudo -u ec2-user echo '"production"' > .next/BUILD_ID
+                    sudo -u ec2-user echo '{"version":"15.3.3"}' > .next/required-server-files.json
+                    
+                    # 기본 페이지 생성
+                    sudo -u ec2-user mkdir -p pages
+                    sudo -u ec2-user cat > pages/index.js << 'EOFPAGE'
+export default function Home() {
+  return (
+    <div style={{padding: '20px', textAlign: 'center'}}>
+      <h1>Bank Demo Application</h1>
+      <p>Application is running in fallback mode.</p>
+      <p>Please check the build logs and rebuild manually if needed.</p>
+    </div>
+  )
+}
+EOFPAGE
+                    
+                    echo "⚠️  Using fallback mode - manual build may be required later"
                 fi
             fi
         fi
@@ -268,10 +310,12 @@ module.exports = {
       autorestart: true,
       watch: false,
       max_memory_restart: '1G',
+      node_args: '--max-old-space-size=1024',
       env: {
         NODE_ENV: 'production',
         PORT: 3000,
-        NEXT_PUBLIC_API_URL: 'http://localhost:8080/api'
+        NEXT_PUBLIC_API_URL: 'http://localhost:8080/api',
+        NEXT_TELEMETRY_DISABLED: '1'
       },
       error_file: '/opt/bank-demo/logs/web-error.log',
       out_file: '/opt/bank-demo/logs/web-out.log',
@@ -296,7 +340,58 @@ systemctl status nginx --no-pager
 # PM2로 애플리케이션 시작 (ec2-user 권한으로)
 echo "Starting applications with PM2..."
 cd /opt/bank-demo
-sudo -u ec2-user bash -c "cd /opt/bank-demo && /usr/local/bin/pm2 start ecosystem.config.js && /usr/local/bin/pm2 save && /usr/local/bin/pm2 startup"
+
+# PM2 경로 찾기
+PM2_PATH=""
+for path in "/usr/local/bin/pm2" "/usr/bin/pm2" "$(which pm2 2>/dev/null)" "$(sudo -u ec2-user which pm2 2>/dev/null)" "$(npm root -g)/pm2/bin/pm2"; do
+    if [ -f "$path" ] && [ -x "$path" ]; then
+        PM2_PATH="$path"
+        echo "Found PM2 at: $PM2_PATH"
+        break
+    fi
+done
+
+# PM2를 찾지 못한 경우 다시 설치 시도
+if [ -z "$PM2_PATH" ]; then
+    echo "PM2 not found, attempting reinstallation..."
+    npm install -g pm2 --force
+    sleep 5
+    
+    # 재설치 후 다시 경로 찾기
+    for path in "/usr/local/bin/pm2" "/usr/bin/pm2" "$(which pm2 2>/dev/null)" "$(sudo -u ec2-user which pm2 2>/dev/null)" "$(npm root -g)/pm2/bin/pm2"; do
+        if [ -f "$path" ] && [ -x "$path" ]; then
+            PM2_PATH="$path"
+            echo "Found PM2 after reinstall at: $PM2_PATH"
+            break
+        fi
+    done
+fi
+
+# PM2 실행
+if [ -n "$PM2_PATH" ]; then
+    echo "Starting PM2 applications..."
+    sudo -u ec2-user bash -c "cd /opt/bank-demo && $PM2_PATH start ecosystem.config.js && $PM2_PATH save"
+    
+    # PM2 startup 설정 (sudo 권한 필요)
+    echo "Setting up PM2 startup..."
+    sudo -u ec2-user $PM2_PATH startup systemd -u ec2-user --hp /home/ec2-user
+else
+    echo "❌ CRITICAL: PM2 not found even after reinstallation"
+    echo "Attempting to start applications directly with nohup..."
+    
+    # PM2 없이 직접 실행 (폴백)
+    cd /opt/bank-demo/bank-demo-was
+    if [ -f "server.js" ]; then
+        sudo -u ec2-user nohup node server.js > /opt/bank-demo/logs/was-direct.log 2>&1 &
+        echo "Started WAS directly with nohup"
+    fi
+    
+    cd /opt/bank-demo/bank-demo-web
+    if [ -f "package.json" ]; then
+        sudo -u ec2-user nohup npm start > /opt/bank-demo/logs/web-direct.log 2>&1 &
+        echo "Started Web directly with nohup"
+    fi
+fi
 
 # 헬스체크
 echo "Waiting for services to start..."
@@ -318,7 +413,12 @@ for i in {1..10}; do
     if [ $i -eq 10 ]; then
         echo "⚠️  Health checks failed, but continuing..."
         echo "Service status:"
-        sudo -u ec2-user /usr/local/bin/pm2 list || echo "PM2 list failed"
+        if [ -n "$PM2_PATH" ]; then
+            sudo -u ec2-user $PM2_PATH list || echo "PM2 list failed"
+        else
+            echo "PM2 not available, checking processes directly:"
+            ps aux | grep -E "(node|npm)" | grep -v grep || echo "No Node.js processes found"
+        fi
         systemctl status nginx --no-pager || echo "Nginx status failed"
     fi
     
@@ -331,7 +431,13 @@ echo "Instance: $INSTANCE_ID ($PRIVATE_IP)"
 echo "Services should be available on port 80"
 echo ""
 echo "Debug commands:"
-echo "  sudo -u ec2-user /usr/local/bin/pm2 list"
+if [ -n "$PM2_PATH" ]; then
+    echo "  sudo -u ec2-user $PM2_PATH list"
+    echo "  sudo -u ec2-user $PM2_PATH logs"
+else
+    echo "  ps aux | grep node"
+    echo "  cat /opt/bank-demo/logs/*.log"
+fi
 echo "  sudo systemctl status nginx"
 echo "  curl http://localhost/health"
 echo "=====================================" 
