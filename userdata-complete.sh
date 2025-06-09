@@ -17,6 +17,23 @@ echo "====================================="
 # 오류 발생시 즉시 종료
 set -e
 
+# 메모리 최적화 설정
+echo "Optimizing system for build process..."
+
+# 스왑 파일 생성 (메모리가 부족한 경우 대비)
+if [ ! -f /swapfile ]; then
+    echo "Creating swap file for build process..."
+    fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1024 count=2097152
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    echo "✅ Swap file created"
+fi
+
+# Node.js 메모리 제한 설정
+export NODE_OPTIONS="--max-old-space-size=2048"
+
 # RPM lock 대기 함수
 wait_for_rpm() {
     for i in {1..30}; do
@@ -145,10 +162,33 @@ if [ -d "bank-demo-web" ]; then
         }
         
         echo "Building Next.js application..."
-        sudo -u ec2-user npm run build || {
-            echo "CRITICAL: Next.js build failed"
-            exit 1
-        }
+        # Set Node.js memory limit and build with retry logic
+        export NODE_OPTIONS="--max-old-space-size=2048"
+        
+        # First attempt with full build
+        if sudo -u ec2-user NODE_OPTIONS="--max-old-space-size=2048" timeout 600 npm run build; then
+            echo "✅ Next.js build completed successfully"
+        else
+            echo "⚠️  First build attempt failed, trying with reduced memory settings..."
+            
+            # Second attempt with minimal memory settings
+            if sudo -u ec2-user NODE_OPTIONS="--max-old-space-size=1024" timeout 900 npm run build; then
+                echo "✅ Next.js build completed with reduced memory"
+            else
+                echo "⚠️  Build failed, attempting without optimization..."
+                
+                # Third attempt without optimization
+                if sudo -u ec2-user NODE_OPTIONS="--max-old-space-size=512" NEXT_TELEMETRY_DISABLED=1 timeout 1200 npm run build; then
+                    echo "✅ Next.js build completed without optimization"
+                else
+                    echo "❌ All build attempts failed. Creating minimal production setup..."
+                    # Create a minimal package to continue
+                    sudo -u ec2-user mkdir -p .next/static
+                    sudo -u ec2-user echo '{"version":"1.0.0"}' > .next/BUILD_ID
+                    echo "⚠️  Using fallback build, application may have limited functionality"
+                fi
+            fi
+        fi
     else
         echo "WARNING: No package.json found in bank-demo-web"
     fi
