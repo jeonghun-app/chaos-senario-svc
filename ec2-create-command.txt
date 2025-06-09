@@ -1,0 +1,28 @@
+# AWS CLI 직접 실행 명령어 (한 줄)
+
+aws ec2 run-instances \
+    --region us-east-1 \
+    --image-id ami-0340d40dae6a2cbcf \
+    --instance-type t3.medium \
+    --subnet-id subnet-0965c00cce99ea63c \
+    --security-group-ids sg-0d8ba709de8330b24 \
+    --iam-instance-profile Arn=arn:aws:iam::081041735764:instance-profile/EC2Sec \
+    --associate-public-ip-address \
+    --user-data file://userdata-bootstrap.sh \
+    --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":100,"VolumeType":"gp3","DeleteOnTermination":true,"Encrypted":true}}]' \
+    --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=BankDemo-WebWAS-Instance},{Key=Project,Value=ChaosEngineering},{Key=Environment,Value=Demo},{Key=ChaosTarget,Value=true}]' \
+    --metadata-options 'HttpTokens=required,HttpPutResponseHopLimit=2,HttpEndpoint=enabled' \
+    --monitoring 'Enabled=true' \
+    --query 'Instances[0].InstanceId' \
+    --output text
+
+# 실행 전 확인사항:
+# 1. userdata-bootstrap.sh 파일이 현재 디렉토리에 있는지 확인
+# 2. AWS CLI가 설정되어 있는지 확인 (aws configure)
+# 3. 필요한 권한이 있는지 확인
+
+# 인스턴스 생성 후 상태 확인:
+# aws ec2 describe-instances --instance-ids [INSTANCE_ID] --region us-east-1 --query 'Reservations[0].Instances[0].[InstanceId,State.Name,PublicIpAddress,PrivateIpAddress]' --output table
+
+# 로그 확인:
+# aws logs describe-log-groups --log-group-name-prefix '/aws/ec2/bank-demo' --region us-east-1 
