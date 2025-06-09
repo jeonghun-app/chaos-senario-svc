@@ -132,6 +132,11 @@ cd /opt/bank-chaos-web
 
 if [ -f "package.json" ]; then
     echo "Installing npm dependencies..."
+    
+    # 기존 node_modules와 package-lock.json 삭제하여 깨끗한 설치
+    sudo -u ec2-user rm -rf node_modules package-lock.json || true
+    
+    # npm install 실행
     sudo -u ec2-user npm install || {
         echo "CRITICAL: npm install failed"
         exit 1

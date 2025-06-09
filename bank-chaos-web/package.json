@@ -15,6 +15,7 @@
     "@aws-sdk/client-sfn": "^3.700.0",
     "@heroicons/react": "^2.2.0",
     "date-fns": "^3.6.0",
+    "flowbite": "^2.5.0",
     "flowbite-react": "^0.11.7",
     "next": "^15.3.0",
     "react": "^19.1.0",
@@ -22,13 +23,14 @@
     "recharts": "^2.12.7"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.4",
     "@types/node": "^20.17.30",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
+    "autoprefixer": "^10.4.20",
     "eslint": "^9.24.0",
     "eslint-config-next": "^15.3.0",
-    "tailwindcss": "^4.1.4",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3"
   }
 }
